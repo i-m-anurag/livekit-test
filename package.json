@@ -1,0 +1,24 @@
+{
+  "name": "livekit-latency-tests",
+  "version": "1.0.0",
+  "description": "Latency and concurrency test suite for LiveKit self-hosted WebRTC + AI agent",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test1": "node scripts/test1_e2e_audio_latency.js",
+    "test3": "node scripts/test3_ttfb.js",
+    "test5": "node scripts/test5_network_rtt.js",
+    "analyze": "node scripts/analyze_results.js",
+    "token": "node scripts/token_generator.js",
+    "all": "npm run test1 && npm run test3 && npm run test5 && npm run analyze"
+  },
+  "dependencies": {
+    "@livekit/rtc-node": "^0.12.0",
+    "livekit-server-sdk": "^2.0.0",
+    "dotenv": "^16.0.0",
+    "ws": "^8.0.0",
+    "minimist": "^1.2.8"
+  }
+}
