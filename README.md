@@ -1,219 +1,180 @@
-# LiveKit Latency Test Suite (Node.js)
+# LiveKit Test Suite — Latency First, Then Load
 
-Complete latency testing toolkit for LiveKit self-hosted WebRTC + AI agent setup.
-**All scripts run in Node.js — no Python required.**
+Test latency and performance of your LiveKit server + AI agent using the official **LiveKit CLI** (`lk`).
 
----
+## Prerequisites
+
+- [LiveKit CLI](https://docs.livekit.io/home/cli/cli-setup/) installed (`lk --version`)
+- LiveKit server running (self-hosted or cloud)
+- AI agent deployed and registered
 
 ## Quick Start
 
-### Prerequisites
-- Node.js >= 18.0.0
-- npm or [pnpm](https://pnpm.io) / [yarn](https://yarnpkg.com)
-
-### Install dependencies
-
 ```bash
-npm install
-# or
-pnpm install
-```
-
-### Set up `.env`
-
-```bash
+# 1. Configure credentials
 cp .env.example .env
-# Fill in: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_AGENT_NAME
+# Edit: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_AGENT_NAME
+
+# 2. Verify connectivity
+lk room list --url wss://your-server --api-key KEY --api-secret SECRET
+
+# 3. Smoke test
+./run-tests.sh quick
+
+# 4. Measure latency
+./run-tests.sh latency
+
+# 5. View results
+./export-results.sh latest
 ```
 
-Tokens are **auto-generated** from your API key + secret — no manual token needed.
+---
 
-### Token generation priority
-Each script resolves the token in this order:
-1. `--token YOUR_TOKEN` CLI argument (explicit override)
-2. `LIVEKIT_TOKEN` in `.env` (pre-generated token)
-3. Auto-generated from `LIVEKIT_API_KEY` + `LIVEKIT_API_SECRET` in `.env` ✅ recommended
+## Latency Tests (Single Room)
 
-> **No `AGENT_HOST` / `AGENT_PORT` needed.** Your agent auto-joins rooms via LiveKit dispatch. Set `LIVEKIT_AGENT_NAME` — it is embedded in the room token so LiveKit routes the right agent in automatically.
+These test **one call at a time** — measuring how fast your agent responds.
 
-Generate a token standalone:
+### Quick Smoke Test
+Can the agent connect and respond? (30 seconds)
 ```bash
-node scripts/token_generator.js
-# or
-npm run token
+./run-tests.sh quick
 ```
 
----
-
-## Test Overview
-
-| Test | Script | Runtime | What it measures |
-|------|--------|---------|-----------------|
-| 1 – E2E Audio Latency | `test1_e2e_audio_latency.js` | Node.js | Mic send → agent response received |
-| 2 – Signaling Latency | `test2_signaling_latency.js` | Browser console | SDP RTT, ICE state times |
-| 3 – TTFB | `test3_ttfb.js` | Node.js | VAD silence → first audio byte |
-| 4 – Agent Pipeline | Inside `test3_ttfb.js` (Part A) | Node.js (agent) | STT / LLM / TTS per-stage timing |
-| 5 – Network RTT | `test5_network_rtt.js` | Node.js | TCP RTT, DNS, WebSocket, traceroute |
-| 6 – Jitter & Packet Loss | `test6_jitter_packet_loss.js` | Browser console | Jitter, loss %, RTT from WebRTC stats |
-| 7 – ICE Connection Time | `test7_ice_connection_time.js` | Browser console | ICE phases, TCP vs UDP, TURN detection |
-
----
-
-## Running Each Test
-
----
-
-### TEST 1 – End-to-End Audio Latency *(Node.js bot)*
-
+### Single Session Latency
+One room, one agent, measures response time per speech cycle.
 ```bash
-# Token auto-generated from .env (recommended):
-node scripts/test1_e2e_audio_latency.js
-# or
-npm run test1
-
-# With explicit args:
-node scripts/test1_e2e_audio_latency.js \
-  --url   wss://your-livekit-server.com \
-  --token YOUR_TOKEN \
-  --runs  20 \
-  --delay 3
+./run-tests.sh latency               # 2 min, speech every 5s (~24 samples)
+./run-tests.sh latency 5m            # 5 min (~60 samples)
+./run-tests.sh latency 5m 3s         # 5 min, speech every 3s (~100 samples)
+./run-tests.sh latency 10m 5s        # 10 min (~120 samples, long soak)
 ```
 
-**Output:** `results/test1_e2e_latency.json`
+**What it measures per sample:**
+- Agent join time (room connect -> agent appears)
+- E2E response latency (speech sent -> agent audio received)
 
----
-
-### TEST 2 – Signaling Latency *(Browser console — manual steps)*
-
-**Steps:**
-1. Open your LiveKit web app in Chrome
-2. Open **DevTools → Console** (`F12`)
-3. Paste the entire contents of `test2_signaling_latency.js`
-4. Press `Enter` — the monitor installs silently
-5. Make a call (join a room)
-6. When done, run:
-   ```js
-   collectSignalingMetrics()   // print summary table
-   exportSignalingMetrics()    // download JSON
-   ```
-
----
-
-### TEST 3 – TTFB *(Node.js bot)*
-
+### Repeated Sessions
+Runs N **separate** room sessions back-to-back. Each session = fresh room + fresh agent join.
 ```bash
-node scripts/test3_ttfb.js
-# or
-npm run test3
-
-# With explicit args:
-node scripts/test3_ttfb.js --runs 15
+./run-tests.sh latency-repeat 5            # 5 sessions x 1 min each
+./run-tests.sh latency-repeat 10 2m        # 10 sessions x 2 min each
+./run-tests.sh latency-repeat 5 1m 3s      # 5 sessions, speech every 3s
 ```
 
-**Part A – Add to your agent code for per-stage pipeline timing:**
-
-```js
-import { TTFBInstrumentation } from "./scripts/test3_ttfb.js";
-const instr = new TTFBInstrumentation();
-
-// When VAD detects end of speech:
-const turn = instr.startTurn();
-
-// After each pipeline stage:
-turn.sttStartAt       = performance.now();  // before STT
-turn.sttEndAt         = performance.now();  // after STT
-turn.llmStartAt       = performance.now();  // before LLM
-turn.llmFirstTokenAt  = performance.now();  // on first LLM token
-turn.ttsStartAt       = performance.now();  // before TTS
-turn.ttsFirstChunkAt  = performance.now();  // on first TTS chunk
-turn.firstAudioSentAt = performance.now();  // when audio sent to LiveKit
-
-instr.finishTurn(turn);
-```
-
-**Outputs:** `results/test3_ttfb.json`, `results/ttfb_agent.jsonl`
+**Why this matters:**
+- Catches **cold-start** issues (first call slower than rest?)
+- Tests **consistency** across separate connections
+- Detects **intermittent spikes** that a single session might miss
 
 ---
 
-### TEST 4 – Agent Pipeline Timing *(no separate script)*
+## Load Tests (Multiple Rooms)
 
-Captured by Part A instrumentation in Test 3. Per-stage breakdown:
-- `sttDurationMs` — Speech-to-Text time
-- `llmDurationMs` — LLM time to first token
-- `ttsFirstChunkMs` — TTS time to first audio chunk
-- `ttfbMs` — Total: VAD silence → audio sent
+These test **scaling** — how your system performs under concurrent usage.
+
+### Agent Concurrency
+Multiple rooms, each with its own agent, running simultaneously.
+```bash
+./run-tests.sh load 3                 # 3 concurrent rooms, 2 min
+./run-tests.sh load 5 5m              # 5 rooms, 5 min
+./run-tests.sh load 10 10m            # 10 rooms, 10 min (stress)
+```
+
+### Media Transport Quality
+Simulates audio publishers and subscribers — measures jitter, packet loss, bitrate.
+```bash
+./run-tests.sh media                  # 5 audio pubs, 20 subs, 2 min
+./run-tests.sh media 10 100 3m        # 10 pubs, 100 subs, 3 min
+```
 
 ---
 
-### TEST 5 – Network RTT *(Node.js)*
+## Full Suite
+
+Runs everything in order: latency first, then load.
 
 ```bash
-node scripts/test5_network_rtt.js
-# or
-npm run test5
-
-# With explicit args:
-node scripts/test5_network_rtt.js \
-  --livekit-host your-livekit-server.com \
-  --runs 20
+./run-tests.sh all
 ```
 
-**Output:** `results/test5_network_rtt.json`
+Order: `quick -> latency -> repeated sessions -> concurrent load -> media`
 
 ---
 
-### TEST 6 – Jitter & Packet Loss *(Browser console)*
+## Exporting Results
 
-**Steps:**
-1. Join a LiveKit room in Chrome
-2. Open **DevTools → Console**
-3. Paste contents of `test6_jitter_packet_loss.js`
-4. Let it run (30s to 5min recommended)
-5. When done:
-   ```js
-   stopJitterMonitor()     // stop + print summary
-   exportJitterResults()   // download JSON
-   ```
+```bash
+./export-results.sh              # Summary of all results
+./export-results.sh latest       # Print the latest result in full
+./export-results.sh csv          # Export metadata as CSV
+./export-results.sh zip          # Package all into a zip for sharing
+./export-results.sh clean        # Delete all result files
+```
 
 ---
 
-### TEST 7 – ICE Connection Time *(Browser console)*
+## Standalone lk Commands
 
-**Steps:**
-1. Open your LiveKit web app on a fresh page load
-2. Open **DevTools → Console** immediately
-3. Paste `test7_ice_connection_time.js` **before joining a room**
-4. Join the room / make a call
-5. When connected:
-   ```js
-   analyzeActiveConnections()  // print table
-   exportICEResults()          // download JSON
-   ```
+### Agent Latency (single room)
+```bash
+lk perf agent-load-test \
+  --url wss://your-server.com \
+  --api-key YOUR_KEY \
+  --api-secret YOUR_SECRET \
+  --rooms 1 \
+  --agent-name your-agent \
+  --duration 2m \
+  --echo-speech-delay 5s
+```
+
+### Agent Load (concurrent rooms)
+```bash
+lk perf agent-load-test \
+  --url wss://your-server.com \
+  --api-key YOUR_KEY \
+  --api-secret YOUR_SECRET \
+  --rooms 5 \
+  --agent-name your-agent \
+  --duration 5m \
+  --echo-speech-delay 5s
+```
+
+### Media Load
+```bash
+lk load-test \
+  --url wss://your-server.com \
+  --api-key YOUR_KEY \
+  --api-secret YOUR_SECRET \
+  --room load-test \
+  --audio-publishers 10 \
+  --subscribers 100 \
+  --duration 2m \
+  --simulate-speakers
+```
 
 ---
 
-## Run All Node.js Tests in Sequence
+## Flag Reference
 
-```bash
-npm run all
-# which runs: test1 → test3 → test5 → analyze
-```
+### `lk perf agent-load-test`
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--rooms N` | Number of concurrent rooms | - |
+| `--agent-name NAME` | Agent to dispatch (must match WorkerOptions) | - |
+| `--duration TIME` | How long to run (30s, 2m, 5m) | until cancelled |
+| `--echo-speech-delay TIME` | Delay between speech cycles | 5s |
+| `--attribute key=value` | Pass attributes to agent (repeatable) | - |
+| `--attribute-file FILE` | Read attributes from JSON file | - |
 
-Or manually:
-```bash
-node scripts/test1_e2e_audio_latency.js && \
-node scripts/test3_ttfb.js && \
-node scripts/test5_network_rtt.js && \
-node scripts/analyze_results.js
-```
-
-## Analyze All Results
-
-```bash
-node scripts/analyze_results.js
-# or
-npm run analyze
-```
+### `lk load-test`
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--room NAME` | Room name | - |
+| `--audio-publishers N` | Number of audio publishers | 0 |
+| `--video-publishers N` | Number of video publishers | 0 |
+| `--subscribers N` | Number of subscriber clients | 0 |
+| `--duration TIME` | How long to run | until cancelled |
+| `--simulate-speakers` | Rotate active speakers | false |
 
 ---
 
@@ -221,13 +182,20 @@ npm run analyze
 
 | Metric | Good | Investigate |
 |--------|------|-------------|
-| TCP RTT to LiveKit | < 50ms | > 100ms |
-| ICE connection time | < 300ms | > 1000ms |
-| SDP round-trip | < 100ms | > 300ms |
-| STT latency | < 400ms | > 800ms |
-| LLM first token | < 600ms | > 1500ms |
-| TTS first chunk | < 200ms | > 500ms |
-| TTFB (total) | < 1200ms | > 2500ms |
-| E2E audio latency | < 1500ms | > 3000ms |
-| Jitter | < 20ms | > 50ms |
+| Agent join time | < 2s | > 5s |
+| E2E response latency | < 1.5s | > 3s |
+| Audio jitter | < 20ms | > 50ms |
 | Packet loss | < 0.5% | > 2% |
+| RTT | < 50ms | > 150ms |
+
+---
+
+## Recommended Test Flow
+
+```
+Step 1:  ./run-tests.sh quick             Is the agent alive?
+Step 2:  ./run-tests.sh latency 5m 3s     Baseline latency (~100 samples)
+Step 3:  ./run-tests.sh latency-repeat 5  Consistency across sessions
+Step 4:  ./run-tests.sh load 5 5m         Does latency degrade at 5x concurrency?
+Step 5:  ./export-results.sh zip          Package & share results
+```
