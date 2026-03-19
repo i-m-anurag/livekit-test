@@ -1,5 +1,8 @@
+node_modules/
 .env
 .DS_Store
+results/*.json
+results/*.jsonl
 results/*.log
 results/*.csv
 *.zip

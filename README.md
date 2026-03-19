@@ -1,201 +1,143 @@
-# LiveKit Test Suite — Latency First, Then Load
+# LiveKit Latency Test Suite (Node.js)
 
-Test latency and performance of your LiveKit server + AI agent using the official **LiveKit CLI** (`lk`).
+Measures 16 latency metrics for your LiveKit WebRTC + AI agent setup.
 
-## Prerequisites
+## Metrics Covered
 
-- [LiveKit CLI](https://docs.livekit.io/home/cli/cli-setup/) installed (`lk --version`)
-- LiveKit server running (self-hosted or cloud)
-- AI agent deployed and registered
+| # | Metric | Test | Runtime |
+|---|--------|------|---------|
+| 1 | E2E round-trip latency | `test_e2e_latency.js` | Node.js |
+| 2 | Agent dispatch time | `test_e2e_latency.js` | Node.js |
+| 3 | STT latency | `test_ttfb.js` (agent instrumentation) | Agent code |
+| 4 | LLM time to first token | `test_ttfb.js` (agent instrumentation) | Agent code |
+| 5 | TTS time to first chunk | `test_ttfb.js` (agent instrumentation) | Agent code |
+| 6 | TTFB (STT+LLM+TTS combined) | `test_ttfb.js` | Node.js |
+| 7 | TCP RTT to LiveKit | `test_network_rtt.js` | Node.js |
+| 8 | WebSocket handshake latency | `test_network_rtt.js` | Node.js |
+| 9 | DNS resolution time | `test_network_rtt.js` | Node.js |
+| 10 | Traceroute hop latency | `test_network_rtt.js` | Node.js |
+| 11 | SDP signaling RTT | `browser/webrtc_signaling.js` | Browser |
+| 12 | ICE connection time | `browser/webrtc_signaling.js` | Browser |
+| 13 | ICE transport type (UDP/TCP) | `browser/webrtc_signaling.js` | Browser |
+| 14 | TURN relay usage | `browser/webrtc_signaling.js` | Browser |
+| 15 | Jitter | `browser/jitter_packet_loss.js` | Browser |
+| 16 | Packet loss % | `browser/jitter_packet_loss.js` | Browser |
 
 ## Quick Start
 
 ```bash
-# 1. Configure credentials
+# 1. Install
+npm install
+
+# 2. Configure
 cp .env.example .env
 # Edit: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_AGENT_NAME
 
-# 2. Verify connectivity
-lk room list --url wss://your-server --api-key KEY --api-secret SECRET
+# 3. Run all Node.js tests
+./run-tests.sh all
 
-# 3. Smoke test
-./run-tests.sh quick
-
-# 4. Measure latency
-./run-tests.sh latency
-
-# 5. View results
-./export-results.sh latest
+# 4. View consolidated results
+./run-tests.sh analyze
 ```
 
----
+## Node.js Tests
 
-## Latency Tests (Single Room)
-
-These test **one call at a time** — measuring how fast your agent responds.
-
-### Quick Smoke Test
-Can the agent connect and respond? (30 seconds)
+### E2E Latency + Agent Dispatch
 ```bash
-./run-tests.sh quick
+./run-tests.sh e2e                      # default: 10 runs
+./run-tests.sh e2e --runs 20 --delay 3  # 20 runs, 3s between
 ```
 
-### Single Session Latency
-One room, one agent, measures response time per speech cycle.
+### TTFB (Time to First Audio Byte)
 ```bash
-./run-tests.sh latency               # 2 min, speech every 5s (~24 samples)
-./run-tests.sh latency 5m            # 5 min (~60 samples)
-./run-tests.sh latency 5m 3s         # 5 min, speech every 3s (~100 samples)
-./run-tests.sh latency 10m 5s        # 10 min (~120 samples, long soak)
+./run-tests.sh ttfb                     # default: 10 runs
+./run-tests.sh ttfb --runs 15
 ```
 
-**What it measures per sample:**
-- Agent join time (room connect -> agent appears)
-- E2E response latency (speech sent -> agent audio received)
-
-### Repeated Sessions
-Runs N **separate** room sessions back-to-back. Each session = fresh room + fresh agent join.
+### Network RTT (TCP, WebSocket, DNS, Traceroute)
 ```bash
-./run-tests.sh latency-repeat 5            # 5 sessions x 1 min each
-./run-tests.sh latency-repeat 10 2m        # 10 sessions x 2 min each
-./run-tests.sh latency-repeat 5 1m 3s      # 5 sessions, speech every 3s
+./run-tests.sh network                  # default: 20 runs
+./run-tests.sh network --runs 30
 ```
 
-**Why this matters:**
-- Catches **cold-start** issues (first call slower than rest?)
-- Tests **consistency** across separate connections
-- Detects **intermittent spikes** that a single session might miss
-
----
-
-## Load Tests (Multiple Rooms)
-
-These test **scaling** — how your system performs under concurrent usage.
-
-### Agent Concurrency
-Multiple rooms, each with its own agent, running simultaneously.
-```bash
-./run-tests.sh load 3                 # 3 concurrent rooms, 2 min
-./run-tests.sh load 5 5m              # 5 rooms, 5 min
-./run-tests.sh load 10 10m            # 10 rooms, 10 min (stress)
-```
-
-### Media Transport Quality
-Simulates audio publishers and subscribers — measures jitter, packet loss, bitrate.
-```bash
-./run-tests.sh media                  # 5 audio pubs, 20 subs, 2 min
-./run-tests.sh media 10 100 3m        # 10 pubs, 100 subs, 3 min
-```
-
----
-
-## Full Suite
-
-Runs everything in order: latency first, then load.
-
+### Run Everything
 ```bash
 ./run-tests.sh all
 ```
 
-Order: `quick -> latency -> repeated sessions -> concurrent load -> media`
+## Browser Tests (paste in DevTools console)
 
----
+### WebRTC Signaling + ICE + Transport
+Measures: SDP RTT, ICE connection time, UDP vs TCP, TURN detection
 
-## Exporting Results
+1. Open your LiveKit web app in Chrome
+2. Open DevTools Console (F12)
+3. Paste `scripts/browser/webrtc_signaling.js` **before** joining a room
+4. Join the room
+5. Run: `getSignalingResults()` or `exportSignalingResults()`
 
-```bash
-./export-results.sh              # Summary of all results
-./export-results.sh latest       # Print the latest result in full
-./export-results.sh csv          # Export metadata as CSV
-./export-results.sh zip          # Package all into a zip for sharing
-./export-results.sh clean        # Delete all result files
+### Jitter & Packet Loss
+Measures: Jitter, packet loss %, RTT, bitrate
+
+1. Join a LiveKit room in Chrome
+2. Open DevTools Console
+3. Paste `scripts/browser/jitter_packet_loss.js`
+4. Let it run 30s-5min
+5. Run: `stopMonitor()` or `exportMonitor()`
+
+## Agent-Side Pipeline Instrumentation
+
+For per-stage breakdown (STT/LLM/TTS), add this to your agent code:
+
+```javascript
+import { TTFBInstrumentation } from "./scripts/test_ttfb.js";
+const instr = new TTFBInstrumentation();
+
+// On each conversation turn:
+const turn = instr.startTurn();
+turn.sttStartAt       = performance.now();  // before STT
+turn.sttEndAt         = performance.now();  // after STT
+turn.llmStartAt       = performance.now();  // before LLM
+turn.llmFirstTokenAt  = performance.now();  // first LLM token
+turn.ttsStartAt       = performance.now();  // before TTS
+turn.ttsFirstChunkAt  = performance.now();  // first TTS chunk
+turn.firstAudioSentAt = performance.now();  // audio sent
+instr.finishTurn(turn);
 ```
 
----
+Results saved to `results/ttfb_agent.jsonl`, auto-included by the analyzer.
 
-## Standalone lk Commands
-
-### Agent Latency (single room)
-```bash
-lk perf agent-load-test \
-  --url wss://your-server.com \
-  --api-key YOUR_KEY \
-  --api-secret YOUR_SECRET \
-  --rooms 1 \
-  --agent-name your-agent \
-  --duration 2m \
-  --echo-speech-delay 5s
-```
-
-### Agent Load (concurrent rooms)
-```bash
-lk perf agent-load-test \
-  --url wss://your-server.com \
-  --api-key YOUR_KEY \
-  --api-secret YOUR_SECRET \
-  --rooms 5 \
-  --agent-name your-agent \
-  --duration 5m \
-  --echo-speech-delay 5s
-```
-
-### Media Load
-```bash
-lk load-test \
-  --url wss://your-server.com \
-  --api-key YOUR_KEY \
-  --api-secret YOUR_SECRET \
-  --room load-test \
-  --audio-publishers 10 \
-  --subscribers 100 \
-  --duration 2m \
-  --simulate-speakers
-```
-
----
-
-## Flag Reference
-
-### `lk perf agent-load-test`
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--rooms N` | Number of concurrent rooms | - |
-| `--agent-name NAME` | Agent to dispatch (must match WorkerOptions) | - |
-| `--duration TIME` | How long to run (30s, 2m, 5m) | until cancelled |
-| `--echo-speech-delay TIME` | Delay between speech cycles | 5s |
-| `--attribute key=value` | Pass attributes to agent (repeatable) | - |
-| `--attribute-file FILE` | Read attributes from JSON file | - |
-
-### `lk load-test`
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--room NAME` | Room name | - |
-| `--audio-publishers N` | Number of audio publishers | 0 |
-| `--video-publishers N` | Number of video publishers | 0 |
-| `--subscribers N` | Number of subscriber clients | 0 |
-| `--duration TIME` | How long to run | until cancelled |
-| `--simulate-speakers` | Rotate active speakers | false |
-
----
-
-## Interpreting Results
+## Reference Thresholds
 
 | Metric | Good | Investigate |
 |--------|------|-------------|
-| Agent join time | < 2s | > 5s |
-| E2E response latency | < 1.5s | > 3s |
-| Audio jitter | < 20ms | > 50ms |
+| E2E audio latency | < 1500ms | > 3000ms |
+| Agent dispatch | < 2s | > 5s |
+| STT latency | < 400ms | > 800ms |
+| LLM first token | < 600ms | > 1500ms |
+| TTS first chunk | < 200ms | > 500ms |
+| TTFB total | < 1200ms | > 2500ms |
+| TCP RTT | < 50ms | > 100ms |
+| WebSocket handshake | < 100ms | > 300ms |
+| DNS resolution | < 10ms | > 50ms |
+| SDP signaling RTT | < 100ms | > 300ms |
+| ICE connection time | < 300ms | > 1000ms |
+| Jitter | < 20ms | > 50ms |
 | Packet loss | < 0.5% | > 2% |
-| RTT | < 50ms | > 150ms |
 
----
-
-## Recommended Test Flow
+## File Structure
 
 ```
-Step 1:  ./run-tests.sh quick             Is the agent alive?
-Step 2:  ./run-tests.sh latency 5m 3s     Baseline latency (~100 samples)
-Step 3:  ./run-tests.sh latency-repeat 5  Consistency across sessions
-Step 4:  ./run-tests.sh load 5 5m         Does latency degrade at 5x concurrency?
-Step 5:  ./export-results.sh zip          Package & share results
+scripts/
+  env.js                        Environment loader
+  utils.js                      Stats, audio, helpers
+  token_generator.js            JWT token generation
+  test_e2e_latency.js           E2E latency + agent dispatch
+  test_ttfb.js                  TTFB + agent instrumentation class
+  test_network_rtt.js           TCP, WebSocket, DNS, Traceroute
+  analyze_results.js            Consolidated results analyzer
+  browser/
+    webrtc_signaling.js         SDP, ICE, transport, TURN (browser)
+    jitter_packet_loss.js       Jitter, packet loss (browser)
+results/                        Output directory (git-ignored)
 ```
